@@ -1,0 +1,7 @@
+# ninja log v5
+0	34	1712742885009679885	CMakeFiles/my_executable.dir/main.c.o	7123d3dc50a7debc
+35	63	1712742885037679886	my_executable	ff63b2b1608a506e
+0	32	1712742992381683419	CMakeFiles/my_executable.dir/main.c.o	7123d3dc50a7debc
+32	60	1712742992409683420	my_executable	ff63b2b1608a506e
+0	31	1712743006601683888	CMakeFiles/my_executable.dir/main.c.o	7123d3dc50a7debc
+31	55	1712743006625683888	my_executable	ff63b2b1608a506e
