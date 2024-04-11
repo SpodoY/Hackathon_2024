@@ -5,8 +5,10 @@ include_directories(
         lg
 )
 
-add_executable(gpioTest main.c
-)
+add_executable(gpioTest main.c)
+
 target_link_libraries(gpioTest
         lgpio
+        mosquitto
+        wiringPi
 )
