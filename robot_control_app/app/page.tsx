@@ -3,6 +3,7 @@
 import mqtt from "mqtt"
 import { useEffect, useState } from "react"
 import { ControlButtons } from "./components/ControlButtons"
+import PlantForm from "./components/PlantForm"
 
 export default function Home() {
 
@@ -39,8 +40,11 @@ export default function Home() {
   }, [client])
 
   return (
-    <main className="flex min-h-screen bg-cover bg-center bg-[url('/plant_bg.jpg')] flex-col items-center justify-between p-24">
-      <ControlButtons broker={client} />
+    <main className="flex min-h-screen bg-cover bg-center bg-[url('/plant_bg.jpg')] flex-col items-center justify-between">
+      <div className="flex min-h-screen bg-cover bg-center bg-black/50 flex-col items-center justify-between">
+        <ControlButtons broker={client} />
+        <PlantForm broker={client} />
+      </div>
     </main>
   );
 }

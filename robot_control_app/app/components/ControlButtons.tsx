@@ -8,7 +8,7 @@ type props = {
 }
 
 export const ControlButtons = ({broker}: props) => {
-    const MQTT_PUBLISH_TOPIC = 'cmnd/car/control'
+    const MQTT_PUBLISH_TOPIC = 'car/control'
 
     const handlePublish = (event: any, broker: mqtt.MqttClient | null) => {
         if (broker?.connected) {
