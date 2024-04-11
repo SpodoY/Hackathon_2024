@@ -9,9 +9,13 @@ import json
 
 broker = "192.168.1.50"
 port = 1883
+
+# MQTT Topics
 sensor_topic = "tele/Sensor1_C11CE5/SENSOR"
 plant_settings_topic = "plant/settings"
-car_env = "car/envEval"
+car_response_topic = "car/response"
+car_env_topic = "car/envEval"
+
 client_id = f'python-mqtt-{random.randint(0, 1000)}'
 username = 'prod'
 password = 'Traktor'
@@ -46,14 +50,20 @@ def on_message(client, userdata, msg):
         decodePlantSettings(msg.payload.decode("utf-8"))
         return
 
+    if msg.topic == car_response_topic:
+        print(f"Car response: {msg.payload.decode('utf-8')}")
+        return
+
+
+
     # Decodes the response into a 'SensorResponse' Model
     response = json.loads(msg.payload.decode())
     sensor_response = SensorResponse()
     lastMessagePayload = sensor_response.parseResponse(response)
 
     if plantSettings is not None:
-        calculatePlantCondition(lastMessagePayload)
-        client.publish(topic=car_env)
+        plantConditions = calculatePlantCondition(lastMessagePayload)
+        client.publish(topic=car_env_topic, payload=json.dumps(plantConditions))
     else:
         print("No plant settings yet")
 
@@ -146,6 +156,7 @@ mqttc.connect(broker, port)
 
 mqttc.subscribe(sensor_topic)
 mqttc.subscribe(plant_settings_topic)
+mqttc.subscribe(car_response_topic)
 
 # Blocking call that processes network traffic, dispatches callbacks and
 # handles reconnecting.
