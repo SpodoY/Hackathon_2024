@@ -13,7 +13,7 @@ export default function Home() {
     let mqttc: mqtt.MqttClient | null = null
 
     const connectMQTT = async () => {
-      mqttc = await mqtt.connectAsync("mqtt://192.168.1.50", {
+      mqttc = await mqtt.connectAsync("mqtt://192.168.178.172", {
         port: 9001,
         username: "prod",
         password: "Traktor"

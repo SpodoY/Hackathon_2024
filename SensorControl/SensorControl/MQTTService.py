@@ -7,7 +7,7 @@ from Model.MoistureLevels import MoistureLevel
 import paho.mqtt.client as mqtt
 import json
 
-broker = "192.168.1.50"
+broker = "192.168.178.172"
 port = 1883
 
 # MQTT Topics
