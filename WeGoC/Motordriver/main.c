@@ -5,7 +5,9 @@
 #include <wiringPi.h>
 #include <errno.h>
 #include <string.h>
-
+#include <pthread.h>
+#include <stdbool.h>
+#include <signal.h>
 
 #define LHIN1 21
 #define LHIN2 20
@@ -17,11 +19,11 @@
 #define RVIN1 7
 #define RVIN2 1
 
-#define ECHO1 24
-#define TRIG1 23
+#define ECHO1 17
+#define TRIG1 27
 
-#define ECHO2 17
-#define TRIG2 27
+#define ECHO2 24
+#define TRIG2 23
 
 #define ECHO3 5
 #define TRIG3 6
@@ -29,7 +31,8 @@
 int power = 40;
 float minDistance = 10.0;
 int gpioHandler;
-int timeout = 50000;
+int howLongMovement = 5000000;
+volatile sig_atomic_t flag = 0;
 
 struct DistanceData {
     float distance1;
@@ -39,15 +42,29 @@ struct DistanceData {
 
 struct DistanceData distances;
 
+
 void forward(int handler);
+
 void stop(int handler);
+
 void reverse(int handler);
+
 void curveLeft(int handler);
+
 void curveRight(int handler);
+
 void right(int handler);
+
 void left(int handler);
+
 void circleRight(int handler);
 
+void sig_handler(int signum) {
+    if (distances.distance1 < minDistance || distances.distance2 < minDistance || distances.distance3 < minDistance) {
+        printf("WE STOP NOW\n");
+        stop(gpioHandler);
+    }
+}
 
 struct mosquitto *mosqittoConnect() {
     mosquitto_lib_init();
@@ -60,7 +77,7 @@ struct mosquitto *mosqittoConnect() {
     // Set the username and password
     if (mosquitto_username_pw_set(mosq, "prod", "Traktor")) {
         printf("Failed by mosquitto_username_pw_set() ! ");
-        // Handle error
+        // Handle error-
     }
 
     // Connect to the MQTT broker
@@ -73,47 +90,54 @@ struct mosquitto *mosqittoConnect() {
 
     return mosq;
 }
-struct DistanceData getDistances(int handler) {
-    struct DistanceData distances;
-    lgGpioWrite(handler, TRIG1, 1);
-    delayMicroseconds(10);
-    lgGpioWrite(handler, TRIG1, 0);
-    while (lgGpioRead(handler, ECHO1) == 0);
-    long startTime1 = micros();
-    while (lgGpioRead(handler, ECHO1) == 1);
-    long travelTimer1 = micros() - startTime1;
-    distances.distance1 = travelTimer1 / 58.0;
 
-    // Sensor 2
-    lgGpioWrite(handler, TRIG2, 1);
+float getDistance(int handler, int TRIG, int ECHO) {
+    // Trigger the sensor
+    lgGpioWrite(handler, TRIG, 1);
     delayMicroseconds(10);
-    lgGpioWrite(handler, TRIG2, 0);
-    while (lgGpioRead(handler, ECHO2) == 0);
-    long startTime2 = micros();
-    while (lgGpioRead(handler, ECHO2) == 1);
-    long travelTimer2 = micros() - startTime2;
-    distances.distance2 = travelTimer2 / 58.0;
+    lgGpioWrite(handler, TRIG, 0);
 
-    // Sensor 3
-    lgGpioWrite(handler, TRIG3, 1);
-    delayMicroseconds(10);
-    lgGpioWrite(handler, TRIG3, 0);
-    while (lgGpioRead(handler, ECHO3) == 0);
-    long startTime3 = micros();
-    while (lgGpioRead(handler, ECHO3) == 1);
-    long travelTimer3 = micros() - startTime3;
-    distances.distance3 = travelTimer3 / 58.0;
+    // Wait for the echo signal
+    unsigned long startTime = micros();
+    unsigned long MAX_TIMEOUT_US = 50000;
+    while (lgGpioRead(handler, ECHO) == 0) {
+        if ((micros() - startTime) > MAX_TIMEOUT_US) {
+            printf("Error: Timeout waiting for echo signal from sensor.\n");
+            return -1.0; // Return -1.0 to indicate an error
+        }
+    }
+    unsigned long startEchoTime = micros(); // Record the time when the echo signal starts
 
-    return distances;
+    while (lgGpioRead(handler, ECHO) == 1) {
+        if ((micros() - startTime) > MAX_TIMEOUT_US) {
+            printf("Error: Timeout while receiving echo signal from sensor.\n");
+            return -1.0; // Return -1.0 to indicate an error
+        }
+    }
+    unsigned long endEchoTime = micros(); // Record the time when the echo signal ends
+
+    // Calculate travel time of the echo signal
+    unsigned long travelTime = endEchoTime - startEchoTime;
+
+    // Check if travel time exceeds maximum timeout
+    if (travelTime > MAX_TIMEOUT_US) {
+        printf("Error: Travel time exceeds maximum timeout. Possible sensor malfunction or obstruction.\n");
+        return -1.0; // Return -1.0 to indicate an error
+    }
+
+    // Calculate distance
+    float distance = travelTime / 58.0; // Speed of sound is approximately 343 m/s or 58 us/cm
+    if (1 < distance < minDistance) raise(SIGUSR1);
+    return distance;
 }
+
+
 void message_callback(struct mosquitto *mosq, void *userdata, const struct mosquitto_message *message) {
     printf("Received message: %s\n", (char *) message->payload);
     const char *payload_str = (const char *) message->payload;
-
     switch (payload_str[0]) {
         case ('F'):
             forward(gpioHandler);
-            printf("asdasd");
             break;
         case ('L'):
             curveRight(gpioHandler);
@@ -132,7 +156,8 @@ void message_callback(struct mosquitto *mosq, void *userdata, const struct mosqu
             break;
     }
 }
-void mosquittoReceiveMessage(struct mosquitto *mosq, int handler){
+
+void mosquittoReceiveMessage(struct mosquitto *mosq, int handler) {
     int mid = 0; // Message ID, not used in this example
     if (mosquitto_subscribe(mosq, &mid, "car/control", 0)) {
         printf("cant subscribe");
@@ -143,54 +168,51 @@ void mosquittoReceiveMessage(struct mosquitto *mosq, int handler){
 };
 
 
-
-
-
-
-
-void wheelForward(int handler, int wheel1, int wheel2 ){
-    lgTxPwm(handler,wheel1,10000,power,1,timeout);
-    lgTxPwm(handler,wheel2,10000,0,1,timeout);
-}
-void wheelBack(int handler, int wheel1, int wheel2 ){
-    lgTxPwm(handler,wheel1,10000,0,1,timeout);
-    lgTxPwm(handler,wheel2,10000,power,1,timeout);
-}
-void wheelStop(int handler, int wheel1, int wheel2 ){
-    lgGpioWrite(handler,wheel1,0);
-    lgGpioWrite(handler,wheel2,0);
+void wheelForward(int handler, int wheel1, int wheel2) {
+    lgTxPwm(handler, wheel1, 10000, power, 1, 0);
+    lgTxPwm(handler, wheel2, 10000, 0, 1, 0);
 }
 
-void stopAfterOneSec(int handler){
-    usleep(1000000); // Sleep for 1 second
+void wheelBack(int handler, int wheel1, int wheel2) {
+    lgTxPwm(handler, wheel1, 10000, 0, 1, 0);
+    lgTxPwm(handler, wheel2, 10000, power, 1, 0);
+}
+
+void wheelStop(int handler, int wheel1, int wheel2) {
+    lgTxPwm(handler, wheel1, 10000, 0, 1, 0);
+    lgTxPwm(handler, wheel2, 10000, 0, 1, 0);
+}
+
+void stopAfterOneSec(int handler) {
+    usleep(howLongMovement); // Sleep for 1 second
     stop(handler); // Stop after 1 second
 }
 
-void forward(int handler){
+void forward(int handler) {
     wheelForward(handler, RVIN1, RVIN2);
     wheelForward(handler, RHIN1, RHIN2);
     wheelForward(handler, LVIN1, LVIN2);
     wheelForward(handler, LHIN1, LHIN2);
-    stopAfterOneSec(handler);
+    stopAfterOneSec(gpioHandler);
+
 }
 
-void stop(int handler){
+void stop(int handler) {
     wheelStop(handler, RVIN1, RVIN2);
     wheelStop(handler, RHIN1, RHIN2);
     wheelStop(handler, LVIN1, LVIN2);
     wheelStop(handler, LHIN1, LHIN2);
 }
 
-void reverse(int handler){
+void reverse(int handler) {
     wheelBack(handler, RVIN1, RVIN2);
     wheelBack(handler, RHIN1, RHIN2);
     wheelBack(handler, LVIN1, LVIN2);
     wheelBack(handler, LHIN1, LHIN2);
-    stopAfterOneSec(handler);
-
+    stopAfterOneSec(gpioHandler);
 }
 
-void curveRight(int handler){
+void curveRight(int handler) {
     wheelStop(handler, RVIN1, RVIN2);
     wheelStop(handler, RHIN1, RHIN2);
     wheelForward(handler, LVIN1, LVIN2);
@@ -199,7 +221,7 @@ void curveRight(int handler){
 
 }
 
-void curveLeft(int handler){
+void curveLeft(int handler) {
     wheelStop(handler, LVIN1, LVIN2);
     wheelStop(handler, LHIN1, LHIN2);
     wheelForward(handler, RVIN1, RVIN2);
@@ -207,7 +229,7 @@ void curveLeft(int handler){
     stopAfterOneSec(handler);
 }
 
-void right(int handler){
+void right(int handler) {
     wheelBack(handler, RVIN1, RVIN2);
     wheelForward(handler, RHIN1, RHIN2);
     wheelForward(handler, LVIN1, LVIN2);
@@ -216,7 +238,7 @@ void right(int handler){
 
 }
 
-void left(int handler){
+void left(int handler) {
     wheelForward(handler, RVIN1, RVIN2);
     wheelBack(handler, RHIN1, RHIN2);
     wheelBack(handler, LVIN1, LVIN2);
@@ -225,7 +247,7 @@ void left(int handler){
 
 }
 
-void turnLeft(int handler){
+void turnLeft(int handler) {
     wheelForward(handler, RVIN1, RVIN2);
     wheelStop(handler, RHIN1, RHIN2);
     wheelBack(handler, LVIN1, LVIN2);
@@ -233,7 +255,7 @@ void turnLeft(int handler){
     stopAfterOneSec(handler);
 }
 
-void turnRight(int handler){
+void turnRight(int handler) {
     wheelBack(handler, RVIN1, RVIN2);
     wheelStop(handler, RHIN1, RHIN2);
     wheelForward(handler, LVIN1, LVIN2);
@@ -241,7 +263,7 @@ void turnRight(int handler){
     stopAfterOneSec(handler);
 }
 
-void circleRight(int handler){
+void circleRight(int handler) {
     wheelForward(handler, LVIN1, LVIN2);
     wheelForward(handler, LHIN1, LHIN2);
     wheelBack(handler, RVIN1, RVIN2);
@@ -249,7 +271,7 @@ void circleRight(int handler){
     stopAfterOneSec(handler);
 }
 
-void circleLeft(int handler){
+void circleLeft(int handler) {
     wheelForward(handler, RVIN1, RVIN2);
     wheelForward(handler, RHIN1, RHIN2);
     wheelBack(handler, LVIN1, LVIN2);
@@ -257,6 +279,42 @@ void circleLeft(int handler){
     stopAfterOneSec(handler);
 
 }
+
+void *mqttThread(void *arg) {
+    struct mosquitto *mosq = (struct mosquitto *) arg;
+    mosquittoReceiveMessage(mosq, gpioHandler);
+    return NULL;
+}
+
+void *distanceThread1(void *arg) {
+    while (1) {
+        float distance = getDistance(gpioHandler, TRIG1, ECHO1);
+        distances.distance1 = distance;
+        usleep(100000);
+    }
+    return NULL;
+}
+
+// Function to continuously read distance for sensor 2
+void *distanceThread2(void *arg) {
+    while (1) {
+        float distance = getDistance(gpioHandler, TRIG2, ECHO2);
+        distances.distance2 = distance;
+        usleep(100000);
+    }
+    return NULL;
+}
+
+// Function to continuously read distance for sensor 3
+void *distanceThread3(void *arg) {
+    while (1) {
+        float distance = getDistance(gpioHandler, TRIG3, ECHO3);
+        distances.distance3 = distance;
+        usleep(100000);
+    }
+    return NULL;
+}
+
 int main() {
     gpioHandler = lgGpiochipOpen(4);
     if (gpioHandler < 0) {
@@ -280,9 +338,23 @@ int main() {
     printf("Claimed all GPIOs\n");
     struct mosquitto *mosq = mosqittoConnect();
     printf("Trying to connect\n");
-    mosquittoReceiveMessage(mosq, gpioHandler);
+    pthread_t mqtt_tid;
+    pthread_create(&mqtt_tid, NULL, mqttThread, mosq);
+    pthread_join(mqtt_tid, NULL);
     printf("Connected\n");
+
+    pthread_t thread1, thread2, thread3; // Declare thread variables
+
+    // Create threads for distance measurements
+    pthread_create(&thread1, NULL, distanceThread1, NULL);
+    pthread_create(&thread2, NULL, distanceThread2, NULL);
+    pthread_create(&thread3, NULL, distanceThread3, NULL);
+    signal(SIGUSR1, sig_handler);
+
     while (1) {
+        printf("Distance 1: %f\n", distances.distance1);
+        printf("Distance 2: %f\n", distances.distance2);
+        printf("Distance 3: %f\n", distances.distance3);
         usleep(100000); // Sleep for 100 milliseconds
     }
 
